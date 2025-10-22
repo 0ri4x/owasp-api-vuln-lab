@@ -9,6 +9,7 @@ import java.util.Optional;
 
 public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     Optional<AppUser> findByUsername(String username);
+    Optional<AppUser> findByEmail(String email);
 
     // VULNERABILITY(API9: Improper Inventory/SQLi exemplar using JPQL concatenation via SpEL workaround in controller)
     @Query("select u from AppUser u where u.username like %?1% or u.email like %?1%")
