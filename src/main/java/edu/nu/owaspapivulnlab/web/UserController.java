@@ -3,9 +3,11 @@ package edu.nu.owaspapivulnlab.web;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
+import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 
 import java.util.HashMap;
@@ -17,15 +19,22 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/users")
 public class UserController {
     private final AppUserRepository users;
+    private final UserService userService;
 
-    public UserController(AppUserRepository users) {
+    public UserController(AppUserRepository users, UserService userService) {
         this.users = users;
+        this.userService = userService;
     }
 
     // SECURE: Require authentication and ownership validation
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN') or authentication.name == @userService.getUsernameById(#id)")
-    public UserDTO get(@PathVariable Long id) {
+    public UserDTO get(@PathVariable Long id, Authentication auth) {
+        // SECURE: Double-check ownership validation in method body
+        if (!validateUserAccess(id, auth)) {
+            throw new RuntimeException("Access denied: You can only access your own profile");
+        }
+        
         AppUser user = users.findById(id).orElseThrow(() -> new RuntimeException("User not found"));
         return convertToDTO(user);
     }
@@ -72,6 +81,32 @@ public class UserController {
         Map<String, String> response = new HashMap<>();
         response.put("status", "deleted");
         return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * SECURE: Validate that the authenticated user can access the specified user resource
+     * @param targetUserId the user ID to check access for
+     * @param auth the authentication context
+     * @return true if user can access the resource (owns it or is admin), false otherwise
+     */
+    private boolean validateUserAccess(Long targetUserId, Authentication auth) {
+        if (auth == null || auth.getName() == null) {
+            return false;
+        }
+        
+        // Check if user is admin
+        if (auth.getAuthorities().stream().anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"))) {
+            return true;
+        }
+        
+        // Get current user's ID
+        Long currentUserId = userService.getUserIdByUsername(auth.getName());
+        if (currentUserId == null) {
+            return false;
+        }
+        
+        // Check if user is accessing their own profile
+        return currentUserId.equals(targetUserId);
     }
     
     /**
