@@ -9,6 +9,8 @@ import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
+import edu.nu.owaspapivulnlab.web.dto.PublicUserDTO;
+import edu.nu.owaspapivulnlab.web.dto.AdminUserDTO;
 
 import java.util.HashMap;
 import java.util.List;
@@ -26,17 +28,23 @@ public class UserController {
         this.userService = userService;
     }
 
-    // SECURE: Require authentication and ownership validation
+    // SECURE: Require authentication and ownership validation with role-based data filtering
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN') or authentication.name == @userService.getUsernameById(#id)")
-    public UserDTO get(@PathVariable Long id, Authentication auth) {
+    public Object get(@PathVariable Long id, Authentication auth) {
         // SECURE: Double-check ownership validation in method body
         if (!validateUserAccess(id, auth)) {
             throw new RuntimeException("Access denied: You can only access your own profile");
         }
         
         AppUser user = users.findById(id).orElseThrow(() -> new RuntimeException("User not found"));
-        return convertToDTO(user);
+        
+        // SECURE: Return different DTOs based on user role
+        if (isAdmin(auth)) {
+            return convertToAdminDTO(user);
+        } else {
+            return convertToPublicDTO(user);
+        }
     }
 
     // SECURE: Prevent mass assignment by using explicit DTO and setting defaults
@@ -64,12 +72,13 @@ public class UserController {
                 .collect(Collectors.toList());
     }
 
-    // SECURE: Require admin role for listing all users
+    // SECURE: Require admin role for listing all users with role-based data filtering
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public List<UserDTO> list() {
+    public List<AdminUserDTO> list(Authentication auth) {
+        // SECURE: Only admins can see full user details
         return users.findAll().stream()
-                .map(this::convertToDTO)
+                .map(this::convertToAdminDTO)
                 .collect(Collectors.toList());
     }
 
@@ -110,7 +119,42 @@ public class UserController {
     }
     
     /**
-     * Convert AppUser to UserDTO to prevent password exposure
+     * SECURE: Check if the authenticated user is an admin
+     */
+    private boolean isAdmin(Authentication auth) {
+        if (auth == null || auth.getAuthorities() == null) {
+            return false;
+        }
+        return auth.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
+    }
+    
+    /**
+     * SECURE: Convert AppUser to PublicUserDTO (excludes sensitive fields)
+     */
+    private PublicUserDTO convertToPublicDTO(AppUser user) {
+        return PublicUserDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .build();
+    }
+    
+    /**
+     * SECURE: Convert AppUser to AdminUserDTO (includes administrative fields for admins only)
+     */
+    private AdminUserDTO convertToAdminDTO(AppUser user) {
+        return AdminUserDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .role(user.getRole())
+                .isAdmin(user.isAdmin())
+                .build();
+    }
+    
+    /**
+     * Convert AppUser to UserDTO to prevent password exposure (legacy method for compatibility)
      */
     private UserDTO convertToDTO(AppUser user) {
         return UserDTO.builder()

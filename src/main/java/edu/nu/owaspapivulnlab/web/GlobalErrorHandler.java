@@ -5,27 +5,62 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import edu.nu.owaspapivulnlab.web.dto.SecureErrorResponse;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
-// VULNERABILITY(API7): overly verbose error responses
+// SECURE: Sanitized error responses to prevent information disclosure
 @ControllerAdvice
 public class GlobalErrorHandler {
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<?> all(Exception e) {
-        Map<String, String> errorMap = new HashMap<>();
-        errorMap.put("error", e.getClass().getName());
-        errorMap.put("message", e.getMessage());
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(errorMap);
+    public ResponseEntity<SecureErrorResponse> all(Exception e) {
+        // SECURE: Log detailed error for monitoring but don't expose to client
+        System.err.println("Internal error: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+        
+        SecureErrorResponse error = SecureErrorResponse.builder()
+                .error("Internal Server Error")
+                .message("An unexpected error occurred. Please try again later.")
+                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .build();
+        
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
 
     @ExceptionHandler(DataAccessException.class)
-    public ResponseEntity<?> db(DataAccessException e) {
-        Map<String, String> errorMap = new HashMap<>();
-        errorMap.put("dbError", e.getMessage());
-        return ResponseEntity.status(500).body(errorMap);
+    public ResponseEntity<SecureErrorResponse> db(DataAccessException e) {
+        // SECURE: Log database error for monitoring but don't expose to client
+        System.err.println("Database error: " + e.getMessage());
+        
+        SecureErrorResponse error = SecureErrorResponse.builder()
+                .error("Database Error")
+                .message("A database error occurred. Please try again later.")
+                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .build();
+        
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    }
+    
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<SecureErrorResponse> runtime(RuntimeException e) {
+        // SECURE: Handle runtime exceptions (like access denied) with appropriate status
+        if (e.getMessage().contains("Access denied")) {
+            SecureErrorResponse error = SecureErrorResponse.builder()
+                    .error("Access Denied")
+                    .message(e.getMessage())
+                    .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                    .build();
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+        }
+        
+        // For other runtime exceptions, return generic error
+        SecureErrorResponse error = SecureErrorResponse.builder()
+                .error("Request Error")
+                .message("An error occurred while processing your request.")
+                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .build();
+        
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
 }

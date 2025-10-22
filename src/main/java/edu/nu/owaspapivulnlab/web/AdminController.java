@@ -1,26 +1,29 @@
 package edu.nu.owaspapivulnlab.web;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import edu.nu.owaspapivulnlab.web.dto.AdminMetricsDTO;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
-import java.util.HashMap;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
 
-    // VULNERABILITY(API7: Security Misconfiguration) - may be exposed via incorrect matcher order
+    // SECURE: Admin-only metrics endpoint with sanitized system information
     @GetMapping("/metrics")
-    public Map<String, Object> metrics() {
+    @PreAuthorize("hasRole('ADMIN')")
+    public AdminMetricsDTO metrics() {
         RuntimeMXBean rt = ManagementFactory.getRuntimeMXBean();
-        Map<String, Object> metricsMap = new HashMap<>();
-        metricsMap.put("uptimeMs", rt.getUptime());
-        metricsMap.put("javaVersion", System.getProperty("java.version"));
-        metricsMap.put("threads", ManagementFactory.getThreadMXBean().getThreadCount());
-        return metricsMap;
+        
+        // SECURE: Return sanitized metrics without exposing sensitive system details
+        return AdminMetricsDTO.builder()
+                .uptimeHours(rt.getUptime() / (1000 * 60 * 60)) // Convert to hours, not milliseconds
+                .activeThreads(ManagementFactory.getThreadMXBean().getThreadCount())
+                .status("operational")
+                .build();
     }
 }

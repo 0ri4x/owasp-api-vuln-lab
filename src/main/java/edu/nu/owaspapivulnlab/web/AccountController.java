@@ -10,9 +10,11 @@ import edu.nu.owaspapivulnlab.repo.AccountRepository;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.service.AccountService;
+import edu.nu.owaspapivulnlab.web.dto.AccountDTO;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -64,14 +66,21 @@ public class AccountController {
         return ResponseEntity.ok(response);
     }
 
-    // SECURE: Require authentication to view own accounts
+    // SECURE: Require authentication to view own accounts with proper DTOs
     @GetMapping("/mine")
-    public Object mine(Authentication auth) {
+    public List<AccountDTO> mine(Authentication auth) {
         if (auth == null || auth.getName() == null) {
             return Collections.emptyList();
         }
         AppUser me = users.findByUsername(auth.getName()).orElse(null);
-        return me == null ? Collections.emptyList() : accounts.findByOwnerUserId(me.getId());
+        if (me == null) {
+            return Collections.emptyList();
+        }
+        
+        // SECURE: Return AccountDTOs instead of raw Account entities
+        return accounts.findByOwnerUserId(me.getId()).stream()
+                .map(this::convertToDTO)
+                .collect(java.util.stream.Collectors.toList());
     }
     
     /**
@@ -104,5 +113,16 @@ public class AccountController {
         
         // Check ownership
         return currentUserId.equals(accountOwnerId);
+    }
+    
+    /**
+     * SECURE: Convert Account to AccountDTO to prevent sensitive field exposure
+     */
+    private AccountDTO convertToDTO(Account account) {
+        return AccountDTO.builder()
+                .id(account.getId())
+                .iban(account.getIban())
+                .balance(account.getBalance())
+                .build();
     }
 }
