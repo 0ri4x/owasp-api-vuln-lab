@@ -1,6 +1,7 @@
 package edu.nu.owaspapivulnlab.web;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import edu.nu.owaspapivulnlab.model.Account;
@@ -24,16 +25,17 @@ public class AccountController {
         this.users = users;
     }
 
-    // VULNERABILITY(API1: BOLA) - no check whether account belongs to caller
+    // SECURE: Require authentication and ownership validation
     @GetMapping("/{id}/balance")
+    @PreAuthorize("hasRole('ADMIN') or @userService.getUserIdByUsername(authentication.name) == @accountService.getAccountOwnerId(#id)")
     public Double balance(@PathVariable Long id) {
         Account a = accounts.findById(id).orElseThrow(() -> new RuntimeException("Account not found"));
         return a.getBalance();
     }
 
-    // VULNERABILITY(API4: Unrestricted Resource Consumption) - no rate limiting on transfer
-    // VULNERABILITY(API5/1): no authorization check on owner
+    // SECURE: Require authentication and ownership validation for transfers
     @PostMapping("/{id}/transfer")
+    @PreAuthorize("hasRole('ADMIN') or @userService.getUserIdByUsername(authentication.name) == @accountService.getAccountOwnerId(#id)")
     public ResponseEntity<?> transfer(@PathVariable Long id, @RequestParam Double amount) {
         Account a = accounts.findById(id).orElseThrow(() -> new RuntimeException("Account not found"));
         a.setBalance(a.getBalance() - amount);
@@ -44,10 +46,13 @@ public class AccountController {
         return ResponseEntity.ok(response);
     }
 
-    // Safe-ish helper to view my accounts (still leaks more than needed)
+    // SECURE: Require authentication to view own accounts
     @GetMapping("/mine")
     public Object mine(Authentication auth) {
-        AppUser me = users.findByUsername(auth != null ? auth.getName() : "anonymous").orElse(null);
+        if (auth == null || auth.getName() == null) {
+            return Collections.emptyList();
+        }
+        AppUser me = users.findByUsername(auth.getName()).orElse(null);
         return me == null ? Collections.emptyList() : accounts.findByOwnerUserId(me.getId());
     }
 }

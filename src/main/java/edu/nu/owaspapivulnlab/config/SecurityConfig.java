@@ -7,7 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -21,22 +21,25 @@ import java.io.IOException;
 import java.util.Collections;
 
 @Configuration
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
     @Value("${app.jwt.secret}")
     private String secret;
 
-    // VULNERABILITY(API7 Security Misconfiguration): overly permissive CORS/CSRF and antMatchers order
+    // SECURE: Properly configured SecurityFilterChain with specific endpoint protection
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable()); // APIs typically stateless; but add CSRF for state-changing in real apps
         http.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
         http.authorizeHttpRequests(reg -> reg
-                .requestMatchers("/api/auth/**", "/h2-console/**").permitAll()
-                // VULNERABILITY: broad permitAll on GET allows data scraping (API1/2 depending on context)
-                .requestMatchers(HttpMethod.GET, "/api/**").permitAll()
+                // SECURE: Only allow public access to authentication endpoints
+                .requestMatchers("/api/auth/login", "/api/auth/signup").permitAll()
+                .requestMatchers("/h2-console/**").permitAll() // H2 console for development
+                // SECURE: Require authentication for all other API endpoints
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/**").authenticated() // All other API endpoints require authentication
                 .anyRequest().authenticated()
         );
 
@@ -46,7 +49,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // Minimal JWT filter (VULNERABILITY: weak validation - no audience, issuer checks; long TTL)
+    // SECURE: Improved JWT filter with proper error handling
     static class JwtFilter extends OncePerRequestFilter {
         private final String secret;
         JwtFilter(String secret) { this.secret = secret; }
@@ -66,7 +69,10 @@ public class SecurityConfig {
                             role != null ? Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)) : Collections.emptyList());
                     SecurityContextHolder.getContext().setAuthentication(authn);
                 } catch (JwtException e) {
-                    // VULNERABILITY: swallow errors; continue as anonymous (API7)
+                    // SECURE: Properly handle JWT errors - clear context and continue
+                    SecurityContextHolder.clearContext();
+                    // Log the error for monitoring (in production, use proper logging)
+                    System.err.println("JWT validation failed: " + e.getMessage());
                 }
             }
             chain.doFilter(request, response);

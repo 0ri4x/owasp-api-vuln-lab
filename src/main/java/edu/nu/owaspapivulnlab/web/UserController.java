@@ -2,6 +2,7 @@ package edu.nu.owaspapivulnlab.web;
 
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
@@ -21,8 +22,9 @@ public class UserController {
         this.users = users;
     }
 
-    // SECURE: Return UserDTO instead of AppUser to prevent password exposure
+    // SECURE: Require authentication and ownership validation
     @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or authentication.name == @userService.getUsernameById(#id)")
     public UserDTO get(@PathVariable Long id) {
         AppUser user = users.findById(id).orElseThrow(() -> new RuntimeException("User not found"));
         return convertToDTO(user);
@@ -44,24 +46,27 @@ public class UserController {
         return convertToDTO(savedUser);
     }
 
-    // SECURE: Return UserDTOs instead of AppUsers to prevent password exposure
+    // SECURE: Require authentication for user search
     @GetMapping("/search")
+    @PreAuthorize("hasRole('ADMIN')")
     public List<UserDTO> search(@RequestParam String q) {
         return users.search(q).stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
-    // SECURE: Return UserDTOs instead of AppUsers to prevent password exposure
+    // SECURE: Require admin role for listing all users
     @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public List<UserDTO> list() {
         return users.findAll().stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
-    // VULNERABILITY(API5: Broken Function Level Authorization) - allows regular users to delete anyone
+    // SECURE: Require admin role for user deletion
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> delete(@PathVariable Long id) {
         users.deleteById(id);
         Map<String, String> response = new HashMap<>();
