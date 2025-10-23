@@ -11,6 +11,8 @@ import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.service.RateLimitService;
 import edu.nu.owaspapivulnlab.service.InputValidationService;
+import edu.nu.owaspapivulnlab.service.SecurityLoggingService;
+import edu.nu.owaspapivulnlab.exception.ValidationException;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 import edu.nu.owaspapivulnlab.web.dto.PublicUserDTO;
 import edu.nu.owaspapivulnlab.web.dto.AdminUserDTO;
@@ -29,18 +31,37 @@ public class UserController {
     private final UserService userService;
     private final RateLimitService rateLimitService;
     private final InputValidationService inputValidationService;
+    private final SecurityLoggingService securityLoggingService;
 
-    public UserController(AppUserRepository users, UserService userService, RateLimitService rateLimitService, InputValidationService inputValidationService) {
+    public UserController(AppUserRepository users, UserService userService, RateLimitService rateLimitService, 
+                         InputValidationService inputValidationService, SecurityLoggingService securityLoggingService) {
         this.users = users;
         this.userService = userService;
         this.rateLimitService = rateLimitService;
         this.inputValidationService = inputValidationService;
+        this.securityLoggingService = securityLoggingService;
     }
 
-    // SECURE: Require authentication and ownership validation with role-based data filtering
+    // SECURITY FIX: Enhanced user retrieval with ID validation
     @GetMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN') or authentication.name == @userService.getUsernameById(#id)")
-    public Object get(@PathVariable Long id, Authentication auth) {
+    public Object get(@PathVariable Long id, Authentication auth, HttpServletRequest request) {
+        
+        // SECURITY FIX: Validate user ID parameter
+        if (!inputValidationService.isValidId(id)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_USER_ID",
+                auth.getName(),
+                getClientIpAddress(request),
+                "Invalid user ID: " + id,
+                "MEDIUM"
+            );
+            
+            throw new ValidationException(
+                "Invalid user ID format",
+                "User ID validation failed: " + id + " from user: " + auth.getName()
+            );
+        }
         // SECURE: Double-check ownership validation in method body
         if (!validateUserAccess(id, auth)) {
             throw new RuntimeException("Access denied: You can only access your own profile");
@@ -149,19 +170,23 @@ public class UserController {
             return ResponseEntity.status(429).body(error);
         }
         
-        // SECURITY FIX: Input validation and sanitization
-        if (q == null || q.trim().isEmpty()) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "Search query cannot be empty");
-            return ResponseEntity.status(400).body(error);
+        // SECURITY FIX: Enhanced search query validation
+        if (!inputValidationService.isValidSearchQuery(q)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_SEARCH_QUERY",
+                auth.getName(),
+                getClientIpAddress(httpRequest),
+                "Invalid search query: " + q,
+                "MEDIUM"
+            );
+            
+            throw new ValidationException(
+                "Invalid search query. Query must be 2-100 characters and contain valid characters only.",
+                "Search query validation failed: " + q + " from admin: " + auth.getName()
+            );
         }
         
-        String sanitizedQuery = q.trim();
-        if (sanitizedQuery.length() < 2) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "Search query must be at least 2 characters long");
-            return ResponseEntity.status(400).body(error);
-        }
+        String sanitizedQuery = inputValidationService.sanitizeString(q);
         
         // SECURITY FIX: Log admin search activities for audit
         System.out.println("INFO: Admin search executed - Query: " + sanitizedQuery + 
@@ -336,5 +361,22 @@ public class UserController {
                 .email(user.getEmail())
                 // SECURITY FIX: Removed role and isAdmin fields to prevent exposure
                 .build();
+    }
+    
+    /**
+     * SECURITY FIX: Extract client IP address considering proxies
+     */
+    private String getClientIpAddress(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        
+        String xRealIp = request.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isEmpty()) {
+            return xRealIp;
+        }
+        
+        return request.getRemoteAddr();
     }
 }

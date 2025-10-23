@@ -12,7 +12,11 @@ import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.service.AccountService;
 import edu.nu.owaspapivulnlab.service.RateLimitService;
+import edu.nu.owaspapivulnlab.service.InputValidationService;
+import edu.nu.owaspapivulnlab.service.SecurityLoggingService;
 import edu.nu.owaspapivulnlab.web.dto.AccountDTO;
+import edu.nu.owaspapivulnlab.web.dto.TransferRequest;
+import edu.nu.owaspapivulnlab.exception.ValidationException;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -28,19 +32,41 @@ public class AccountController {
     private final UserService userService;
     private final AccountService accountService;
     private final RateLimitService rateLimitService;
+    private final InputValidationService inputValidationService;
+    private final SecurityLoggingService securityLoggingService;
 
-    public AccountController(AccountRepository accounts, AppUserRepository users, UserService userService, AccountService accountService, RateLimitService rateLimitService) {
+    public AccountController(AccountRepository accounts, AppUserRepository users, UserService userService, 
+                           AccountService accountService, RateLimitService rateLimitService,
+                           InputValidationService inputValidationService, SecurityLoggingService securityLoggingService) {
         this.accounts = accounts;
         this.users = users;
         this.userService = userService;
         this.accountService = accountService;
         this.rateLimitService = rateLimitService;
+        this.inputValidationService = inputValidationService;
+        this.securityLoggingService = securityLoggingService;
     }
 
-    // SECURITY FIX: Enhanced balance endpoint with financial rate limiting
+    // SECURITY FIX: Enhanced balance endpoint with comprehensive input validation
     @GetMapping("/{id}/balance")
     @PreAuthorize("hasRole('ADMIN') or @userService.getUserIdByUsername(authentication.name) == @accountService.getAccountOwnerId(#id)")
     public ResponseEntity<?> balance(@PathVariable Long id, Authentication auth, HttpServletRequest request) {
+        
+        // SECURITY FIX: Validate account ID parameter
+        if (!inputValidationService.isValidId(id)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_ACCOUNT_ID",
+                auth.getName(),
+                getClientIpAddress(request),
+                "Invalid account ID: " + id,
+                "MEDIUM"
+            );
+            
+            throw new ValidationException(
+                "Invalid account ID format",
+                "Account ID validation failed: " + id + " from user: " + auth.getName()
+            );
+        }
         // SECURITY FIX: Financial rate limiting for balance checks
         if (!rateLimitService.isFinancialAllowed(request)) {
             Map<String, Object> error = new HashMap<>();
@@ -81,10 +107,30 @@ public class AccountController {
         return ResponseEntity.ok(response);
     }
 
-    // SECURITY FIX: Enhanced transfer endpoint with strict financial rate limiting
+    // SECURITY FIX: Enhanced transfer endpoint with comprehensive validation
     @PostMapping("/{id}/transfer")
     @PreAuthorize("hasRole('ADMIN') or @userService.getUserIdByUsername(authentication.name) == @accountService.getAccountOwnerId(#id)")
-    public ResponseEntity<?> transfer(@PathVariable Long id, @RequestParam Double amount, Authentication auth, HttpServletRequest request) {
+    public ResponseEntity<?> transfer(@PathVariable Long id, @Valid @RequestBody TransferRequest transferRequest, 
+                                    Authentication auth, HttpServletRequest request) {
+        
+        // SECURITY FIX: Validate account ID parameter
+        if (!inputValidationService.isValidId(id)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_ACCOUNT_ID",
+                auth.getName(),
+                getClientIpAddress(request),
+                "Invalid account ID for transfer: " + id,
+                "HIGH"
+            );
+            
+            throw new ValidationException(
+                "Invalid account ID format",
+                "Account ID validation failed for transfer: " + id + " from user: " + auth.getName()
+            );
+        }
+        
+        // SECURITY FIX: Convert BigDecimal to Double for legacy compatibility
+        Double amount = transferRequest.getAmount().doubleValue();
         // SECURITY FIX: Strict financial rate limiting for transfers
         if (!rateLimitService.isFinancialAllowed(request)) {
             Map<String, Object> error = new HashMap<>();
@@ -100,22 +146,46 @@ public class AccountController {
             return ResponseEntity.status(429).body(error);
         }
         
-        // SECURITY FIX: Enhanced input validation for financial operations
-        if (amount == null || amount <= 0) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "Invalid transfer amount. Amount must be positive.");
-            return ResponseEntity.status(400).body(error);
+        // SECURITY FIX: Comprehensive financial amount validation
+        if (!inputValidationService.isValidTransferAmount(amount)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_TRANSFER_AMOUNT",
+                auth.getName(),
+                getClientIpAddress(request),
+                "Invalid transfer amount: " + amount + " for account: " + id,
+                "HIGH"
+            );
+            
+            throw new ValidationException(
+                "Invalid transfer amount. Amount must be positive, not exceed $1,000,000, and have at most 2 decimal places.",
+                "Transfer amount validation failed: " + amount + " from user: " + auth.getName()
+            );
         }
         
-        if (amount > 10000) { // SECURITY FIX: Maximum transfer limit
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "Transfer amount exceeds maximum limit of $10,000");
+        // SECURITY FIX: Validate destination account IBAN
+        if (!inputValidationService.isValidIban(transferRequest.getDestinationAccount())) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_DESTINATION_IBAN",
+                auth.getName(),
+                getClientIpAddress(request),
+                "Invalid destination IBAN: " + transferRequest.getDestinationAccount(),
+                "MEDIUM"
+            );
             
-            // SECURITY FIX: Log large transfer attempts
-            System.err.println("SECURITY ALERT: Large transfer attempt blocked - Amount: " + amount + 
-                             " by user: " + auth.getName() + " from IP: " + request.getRemoteAddr());
+            throw new ValidationException(
+                "Invalid destination account format",
+                "IBAN validation failed: " + transferRequest.getDestinationAccount() + " from user: " + auth.getName()
+            );
+        }
+        
+        // SECURITY FIX: Validate transfer description if provided
+        if (transferRequest.getDescription() != null && 
+            !inputValidationService.isValidStringLength(transferRequest.getDescription(), 0, 500)) {
             
-            return ResponseEntity.status(400).body(error);
+            throw new ValidationException(
+                "Transfer description is too long (maximum 500 characters)",
+                "Description length validation failed from user: " + auth.getName()
+            );
         }
         
         // SECURE: Double-check ownership validation in method body
@@ -144,16 +214,29 @@ public class AccountController {
         a.setBalance(a.getBalance() - amount);
         accounts.save(a);
         
-        // SECURITY FIX: Log all financial transactions for audit trail
-        System.out.println("FINANCIAL TRANSACTION: Transfer executed - Account: " + id + 
-                         " Amount: " + amount + " Previous Balance: " + previousBalance + 
-                         " New Balance: " + a.getBalance() + " User: " + auth.getName() + 
-                         " IP: " + request.getRemoteAddr() + " Time: " + java.time.Instant.now());
+        // SECURITY FIX: Log financial transaction using security logging service
+        securityLoggingService.logFinancialTransaction(
+            transferRequest.getTransferType(),
+            auth.getName(),
+            id.toString(),
+            amount,
+            previousBalance,
+            a.getBalance(),
+            getClientIpAddress(request),
+            true,
+            transactionId
+        );
+        
+        // SECURITY FIX: Generate secure transaction ID
+        String transactionId = java.util.UUID.randomUUID().toString();
         
         Map<String, Object> response = new HashMap<>();
         response.put("status", "success");
-        response.put("transactionId", java.util.UUID.randomUUID().toString());
+        response.put("transactionId", transactionId);
         response.put("amount", amount);
+        response.put("destinationAccount", inputValidationService.sanitizeString(transferRequest.getDestinationAccount()));
+        response.put("transferType", transferRequest.getTransferType());
+        response.put("description", inputValidationService.sanitizeString(transferRequest.getDescription()));
         response.put("remainingBalance", a.getBalance());
         response.put("timestamp", java.time.Instant.now());
         
@@ -218,5 +301,22 @@ public class AccountController {
                 .iban(account.getIban())
                 .balance(account.getBalance())
                 .build();
+    }
+    
+    /**
+     * SECURITY FIX: Extract client IP address considering proxies
+     */
+    private String getClientIpAddress(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        
+        String xRealIp = request.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isEmpty()) {
+            return xRealIp;
+        }
+        
+        return request.getRemoteAddr();
     }
 }

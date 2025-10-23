@@ -103,11 +103,50 @@ public class AuthController {
             return ResponseEntity.status(429).body(error);
         }
         
-        // SECURITY FIX: Enhanced input validation
+        // SECURITY FIX: Enhanced input validation with comprehensive checks
         if (req.username() == null || req.username().trim().isEmpty() || 
             req.password() == null || req.password().trim().isEmpty()) {
+            
+            securityLoggingService.logSecurityViolation(
+                "INVALID_LOGIN_INPUT",
+                req.username(),
+                getClientIpAddress(request),
+                "Empty username or password provided",
+                "MEDIUM"
+            );
+            
             Map<String, String> error = new HashMap<>();
             error.put("error", "Username and password are required");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Validate username format
+        if (!inputValidationService.isValidUsername(req.username())) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_USERNAME_FORMAT",
+                req.username(),
+                getClientIpAddress(request),
+                "Invalid username format: " + req.username(),
+                "MEDIUM"
+            );
+            
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid username format");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Validate password length (basic check)
+        if (!inputValidationService.isValidStringLength(req.password(), 1, 1000)) {
+            securityLoggingService.logSecurityViolation(
+                "INVALID_PASSWORD_LENGTH",
+                req.username(),
+                getClientIpAddress(request),
+                "Password length validation failed",
+                "MEDIUM"
+            );
+            
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid password format");
             return ResponseEntity.status(400).body(error);
         }
         
