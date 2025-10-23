@@ -1,5 +1,6 @@
 package edu.nu.owaspapivulnlab.web;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ResponseEntity;
@@ -8,6 +9,7 @@ import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.JwtService;
 import edu.nu.owaspapivulnlab.service.PasswordService;
+import edu.nu.owaspapivulnlab.service.RateLimitService;
 import edu.nu.owaspapivulnlab.web.dto.SignupRequest;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 
@@ -20,11 +22,13 @@ public class AuthController {
     private final AppUserRepository users;
     private final JwtService jwt;
     private final PasswordService passwordService;
+    private final RateLimitService rateLimitService;
 
-    public AuthController(AppUserRepository users, JwtService jwt, PasswordService passwordService) {
+    public AuthController(AppUserRepository users, JwtService jwt, PasswordService passwordService, RateLimitService rateLimitService) {
         this.users = users;
         this.jwt = jwt;
         this.passwordService = passwordService;
+        this.rateLimitService = rateLimitService;
     }
 
     public static class LoginReq {
@@ -61,47 +65,119 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginReq req) {
+    public ResponseEntity<?> login(@RequestBody LoginReq req, HttpServletRequest request) {
+        // SECURITY FIX: Additional rate limiting check with detailed logging
+        if (!rateLimitService.isAuthAllowed(request)) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Rate limit exceeded");
+            error.put("message", "Too many login attempts. Please try again later.");
+            error.put("remainingAttempts", rateLimitService.getAuthRemainingTokens(request));
+            
+            // SECURITY FIX: Log suspicious activity for monitoring
+            System.err.println("SECURITY ALERT: Rate limit exceeded for login from IP: " + 
+                             request.getRemoteAddr() + " at " + java.time.Instant.now());
+            
+            return ResponseEntity.status(429).body(error);
+        }
+        
+        // SECURITY FIX: Enhanced input validation
+        if (req.username() == null || req.username().trim().isEmpty() || 
+            req.password() == null || req.password().trim().isEmpty()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Username and password are required");
+            return ResponseEntity.status(400).body(error);
+        }
+        
         // SECURE: Using BCrypt password verification instead of plaintext comparison
-        AppUser user = users.findByUsername(req.username()).orElse(null);
+        AppUser user = users.findByUsername(req.username().trim()).orElse(null);
         if (user != null && passwordService.verifyPassword(req.password(), user.getPassword())) {
             Map<String, Object> claims = new HashMap<>();
             claims.put("role", user.getRole());
             claims.put("isAdmin", user.isAdmin());
             String token = jwt.issue(user.getUsername(), claims);
+            
+            // SECURITY FIX: Log successful authentication for monitoring
+            System.out.println("INFO: Successful login for user: " + user.getUsername() + 
+                             " from IP: " + request.getRemoteAddr());
+            
             return ResponseEntity.ok(new TokenRes(token));
         }
+        
+        // SECURITY FIX: Log failed authentication attempts for monitoring
+        System.err.println("SECURITY ALERT: Failed login attempt for username: " + req.username() + 
+                         " from IP: " + request.getRemoteAddr() + " at " + java.time.Instant.now());
+        
         Map<String, String> error = new HashMap<>();
-        error.put("error", "invalid credentials");
+        error.put("error", "Invalid credentials");
         return ResponseEntity.status(401).body(error);
     }
 
     @PostMapping("/signup")
-    public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest req) {
-        // Check if username already exists
-        if (users.findByUsername(req.getUsername()).isPresent()) {
+    public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest req, HttpServletRequest request) {
+        // SECURITY FIX: Additional rate limiting check for signup endpoint
+        if (!rateLimitService.isAuthAllowed(request)) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Rate limit exceeded");
+            error.put("message", "Too many signup attempts. Please try again later.");
+            error.put("remainingAttempts", rateLimitService.getAuthRemainingTokens(request));
+            
+            // SECURITY FIX: Log suspicious signup activity
+            System.err.println("SECURITY ALERT: Rate limit exceeded for signup from IP: " + 
+                             request.getRemoteAddr() + " at " + java.time.Instant.now());
+            
+            return ResponseEntity.status(429).body(error);
+        }
+        
+        // SECURITY FIX: Enhanced input validation and sanitization
+        if (req.getUsername() == null || req.getUsername().trim().isEmpty() ||
+            req.getEmail() == null || req.getEmail().trim().isEmpty() ||
+            req.getPassword() == null || req.getPassword().trim().isEmpty()) {
             Map<String, String> error = new HashMap<>();
-            error.put("error", "Username already exists");
+            error.put("error", "Username, email, and password are required");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        String sanitizedUsername = req.getUsername().trim().toLowerCase();
+        String sanitizedEmail = req.getEmail().trim().toLowerCase();
+        
+        // SECURITY FIX: Prevent account enumeration with generic error messages
+        boolean usernameExists = users.findByUsername(sanitizedUsername).isPresent();
+        boolean emailExists = users.findByEmail(sanitizedEmail).isPresent();
+        
+        if (usernameExists || emailExists) {
+            // SECURITY FIX: Generic error message to prevent enumeration
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Registration failed. Please check your information and try again.");
+            
+            // SECURITY FIX: Log enumeration attempts for monitoring
+            System.err.println("SECURITY ALERT: Potential account enumeration attempt from IP: " + 
+                             request.getRemoteAddr() + " for username: " + sanitizedUsername + 
+                             " email: " + sanitizedEmail + " at " + java.time.Instant.now());
+            
             return ResponseEntity.status(409).body(error);
         }
         
-        // Check if email already exists
-        if (users.findByEmail(req.getEmail()).isPresent()) {
+        // SECURITY FIX: Password strength validation
+        if (req.getPassword().length() < 8) {
             Map<String, String> error = new HashMap<>();
-            error.put("error", "Email already exists");
-            return ResponseEntity.status(409).body(error);
+            error.put("error", "Password must be at least 8 characters long");
+            return ResponseEntity.status(400).body(error);
         }
         
         // Create new user with hashed password
         AppUser newUser = AppUser.builder()
-                .username(req.getUsername())
+                .username(sanitizedUsername)
                 .password(passwordService.hashPassword(req.getPassword())) // SECURE: Hash password before storing
-                .email(req.getEmail())
+                .email(sanitizedEmail)
                 .role("USER") // Default role for new users
                 .isAdmin(false) // Default to non-admin
                 .build();
         
         AppUser savedUser = users.save(newUser);
+        
+        // SECURITY FIX: Log successful registration for monitoring
+        System.out.println("INFO: New user registered: " + savedUser.getUsername() + 
+                         " from IP: " + request.getRemoteAddr());
         
         // Convert to DTO to prevent password exposure
         UserDTO userDTO = UserDTO.builder()

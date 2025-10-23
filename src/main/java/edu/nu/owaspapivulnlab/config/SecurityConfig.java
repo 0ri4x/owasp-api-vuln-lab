@@ -26,8 +26,14 @@ public class SecurityConfig {
 
     @Value("${app.jwt.secret}")
     private String secret;
+    
+    private final RateLimitFilter rateLimitFilter;
 
-    // SECURE: Properly configured SecurityFilterChain with specific endpoint protection
+    public SecurityConfig(RateLimitFilter rateLimitFilter) {
+        this.rateLimitFilter = rateLimitFilter;
+    }
+
+    // SECURITY FIX: Enhanced SecurityFilterChain with rate limiting protection
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable()); // APIs typically stateless; but add CSRF for state-changing in real apps
@@ -45,6 +51,8 @@ public class SecurityConfig {
 
         http.headers(h -> h.frameOptions(f -> f.disable())); // allow H2 console
 
+        // SECURITY FIX: Add rate limiting filter before JWT filter for maximum protection
+        http.addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         http.addFilterBefore(new JwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

@@ -1,5 +1,6 @@
 package edu.nu.owaspapivulnlab.web;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -8,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
+import edu.nu.owaspapivulnlab.service.RateLimitService;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 import edu.nu.owaspapivulnlab.web.dto.PublicUserDTO;
 import edu.nu.owaspapivulnlab.web.dto.AdminUserDTO;
@@ -22,10 +24,12 @@ import java.util.stream.Collectors;
 public class UserController {
     private final AppUserRepository users;
     private final UserService userService;
+    private final RateLimitService rateLimitService;
 
-    public UserController(AppUserRepository users, UserService userService) {
+    public UserController(AppUserRepository users, UserService userService, RateLimitService rateLimitService) {
         this.users = users;
         this.userService = userService;
+        this.rateLimitService = rateLimitService;
     }
 
     // SECURE: Require authentication and ownership validation with role-based data filtering
@@ -63,13 +67,53 @@ public class UserController {
         return convertToDTO(savedUser);
     }
 
-    // SECURE: Require authentication for user search
+    // SECURITY FIX: Enhanced user search with data access rate limiting
     @GetMapping("/search")
     @PreAuthorize("hasRole('ADMIN')")
-    public List<UserDTO> search(@RequestParam String q) {
-        return users.search(q).stream()
+    public ResponseEntity<?> search(@RequestParam String q, Authentication auth, HttpServletRequest request) {
+        // SECURITY FIX: Data access rate limiting for search operations
+        if (!rateLimitService.isDataAccessAllowed(request)) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Rate limit exceeded");
+            error.put("message", "Too many search requests. Please try again later.");
+            
+            // SECURITY FIX: Log suspicious search activity
+            System.err.println("SECURITY ALERT: Rate limit exceeded for user search from IP: " + 
+                             request.getRemoteAddr() + " query: " + q + " by admin: " + auth.getName() + 
+                             " at " + java.time.Instant.now());
+            
+            return ResponseEntity.status(429).body(error);
+        }
+        
+        // SECURITY FIX: Input validation and sanitization
+        if (q == null || q.trim().isEmpty()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Search query cannot be empty");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        String sanitizedQuery = q.trim();
+        if (sanitizedQuery.length() < 2) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Search query must be at least 2 characters long");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Log admin search activities for audit
+        System.out.println("INFO: Admin search executed - Query: " + sanitizedQuery + 
+                         " by admin: " + auth.getName() + " from IP: " + request.getRemoteAddr());
+        
+        List<UserDTO> results = users.search(sanitizedQuery).stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("query", sanitizedQuery);
+        response.put("results", results);
+        response.put("count", results.size());
+        response.put("timestamp", java.time.Instant.now());
+        
+        return ResponseEntity.ok(response);
     }
 
     // SECURE: Require admin role for listing all users with role-based data filtering
