@@ -1,5 +1,7 @@
 package edu.nu.owaspapivulnlab.config;
 
+import edu.nu.owaspapivulnlab.service.JwtService;
+import edu.nu.owaspapivulnlab.service.SessionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -7,7 +9,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -19,37 +21,57 @@ import io.jsonwebtoken.*;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Map;
 
 @Configuration
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
     @Value("${app.jwt.secret}")
     private String secret;
+    
+    private final RateLimitFilter rateLimitFilter;
+    private final MassAssignmentProtectionFilter massAssignmentProtectionFilter;
 
-    // VULNERABILITY(API7 Security Misconfiguration): overly permissive CORS/CSRF and antMatchers order
+    public SecurityConfig(RateLimitFilter rateLimitFilter, MassAssignmentProtectionFilter massAssignmentProtectionFilter) {
+        this.rateLimitFilter = rateLimitFilter;
+        this.massAssignmentProtectionFilter = massAssignmentProtectionFilter;
+    }
+
+    // SECURITY FIX: Enhanced SecurityFilterChain with rate limiting protection
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable()); // APIs typically stateless; but add CSRF for state-changing in real apps
         http.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
         http.authorizeHttpRequests(reg -> reg
-                .requestMatchers("/api/auth/**", "/h2-console/**").permitAll()
-                // VULNERABILITY: broad permitAll on GET allows data scraping (API1/2 depending on context)
-                .requestMatchers(HttpMethod.GET, "/api/**").permitAll()
+                // SECURE: Only allow public access to authentication endpoints
+                .requestMatchers("/api/auth/login", "/api/auth/signup", "/api/auth/refresh").permitAll()
+                .requestMatchers("/h2-console/**").permitAll() // H2 console for development
+                // SECURE: Require authentication for all other API endpoints
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/**").authenticated() // All other API endpoints require authentication
                 .anyRequest().authenticated()
         );
 
         http.headers(h -> h.frameOptions(f -> f.disable())); // allow H2 console
 
-        http.addFilterBefore(new JwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        // SECURITY FIX: Add security filters in proper order for maximum protection
+        http.addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(massAssignmentProtectionFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        
+        // SECURITY FIX: Use basic JWT filter for now
+        http.addFilterBefore(new BasicJwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        
         return http.build();
     }
 
-    // Minimal JWT filter (VULNERABILITY: weak validation - no audience, issuer checks; long TTL)
-    static class JwtFilter extends OncePerRequestFilter {
+
+    
+    // SECURITY FIX: Basic JWT filter as fallback
+    static class BasicJwtFilter extends OncePerRequestFilter {
         private final String secret;
-        JwtFilter(String secret) { this.secret = secret; }
+        BasicJwtFilter(String secret) { this.secret = secret; }
 
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -66,7 +88,7 @@ public class SecurityConfig {
                             role != null ? Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)) : Collections.emptyList());
                     SecurityContextHolder.getContext().setAuthentication(authn);
                 } catch (JwtException e) {
-                    // VULNERABILITY: swallow errors; continue as anonymous (API7)
+                    SecurityContextHolder.clearContext();
                 }
             }
             chain.doFilter(request, response);

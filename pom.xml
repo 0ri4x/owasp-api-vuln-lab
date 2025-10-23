@@ -9,8 +9,11 @@
   <description>Intentionally vulnerable Spring Boot API lab (OWASP API Top 10) with JWT</description>
   <properties>
     <java.version>17</java.version>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
     <spring.boot.version>3.3.4</spring.boot.version>
     <jjwt.version>0.11.5</jjwt.version>
+    <maven.surefire.version>3.0.0</maven.surefire.version>
   </properties>
   <dependencyManagement>
     <dependencies>
@@ -31,6 +34,10 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -72,12 +79,48 @@
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- SECURITY FIX: Add rate limiting dependencies -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.github.vladimir-bukhtoyarov</groupId>
+      <artifactId>bucket4j-core</artifactId>
+      <version>7.6.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.vladimir-bukhtoyarov</groupId>
+      <artifactId>bucket4j-redis</artifactId>
+      <version>7.6.0</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring.boot.version}</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+        <configuration>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${maven.surefire.version}</version>
+        <configuration>
+          <includes>
+            <include>**/*Test.java</include>
+            <include>**/*Tests.java</include>
+          </includes>
+        </configuration>
       </plugin>
     </plugins>
   </build>
