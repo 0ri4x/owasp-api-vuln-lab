@@ -52,8 +52,9 @@ public class SessionService {
         // SECURITY FIX: Validate IP address binding (optional - can be disabled for mobile users)
         boolean ipValid = session.getIpAddress().equals(ipAddress);
         
-        // SECURITY FIX: Validate user agent binding
-        boolean userAgentValid = session.getUserAgent().equals(userAgent);
+        // SECURITY FIX: Validate user agent binding (handle null values for test environments)
+        boolean userAgentValid = (session.getUserAgent() == null && userAgent == null) ||
+                                (session.getUserAgent() != null && session.getUserAgent().equals(userAgent));
         
         if (ipValid && userAgentValid) {
             // SECURITY FIX: Update last accessed time

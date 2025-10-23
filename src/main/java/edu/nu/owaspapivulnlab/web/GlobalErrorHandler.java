@@ -20,9 +20,10 @@ public class GlobalErrorHandler {
         System.err.println("Internal error: " + e.getClass().getSimpleName() + " - " + e.getMessage());
         
         SecureErrorResponse error = SecureErrorResponse.builder()
-                .error("Internal Server Error")
+                .errorId(java.util.UUID.randomUUID().toString())
+                .errorCode("INTERNAL_SERVER_ERROR")
                 .message("An unexpected error occurred. Please try again later.")
-                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .timestamp(java.time.Instant.now())
                 .build();
         
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
@@ -34,9 +35,10 @@ public class GlobalErrorHandler {
         System.err.println("Database error: " + e.getMessage());
         
         SecureErrorResponse error = SecureErrorResponse.builder()
-                .error("Database Error")
+                .errorId(java.util.UUID.randomUUID().toString())
+                .errorCode("DATABASE_ERROR")
                 .message("A database error occurred. Please try again later.")
-                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .timestamp(java.time.Instant.now())
                 .build();
         
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
@@ -47,18 +49,20 @@ public class GlobalErrorHandler {
         // SECURE: Handle runtime exceptions (like access denied) with appropriate status
         if (e.getMessage().contains("Access denied")) {
             SecureErrorResponse error = SecureErrorResponse.builder()
-                    .error("Access Denied")
+                    .errorId(java.util.UUID.randomUUID().toString())
+                    .errorCode("ACCESS_DENIED")
                     .message(e.getMessage())
-                    .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                    .timestamp(java.time.Instant.now())
                     .build();
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
         }
         
         // For other runtime exceptions, return generic error
         SecureErrorResponse error = SecureErrorResponse.builder()
-                .error("Request Error")
+                .errorId(java.util.UUID.randomUUID().toString())
+                .errorCode("REQUEST_ERROR")
                 .message("An error occurred while processing your request.")
-                .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .timestamp(java.time.Instant.now())
                 .build();
         
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);

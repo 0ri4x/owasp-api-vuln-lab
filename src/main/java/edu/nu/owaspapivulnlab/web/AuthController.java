@@ -12,6 +12,7 @@ import edu.nu.owaspapivulnlab.service.PasswordService;
 import edu.nu.owaspapivulnlab.service.RateLimitService;
 import edu.nu.owaspapivulnlab.service.SessionService;
 import edu.nu.owaspapivulnlab.service.SecurityLoggingService;
+import edu.nu.owaspapivulnlab.service.InputValidationService;
 import edu.nu.owaspapivulnlab.web.dto.SignupRequest;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 
@@ -27,16 +28,18 @@ public class AuthController {
     private final RateLimitService rateLimitService;
     private final SessionService sessionService;
     private final SecurityLoggingService securityLoggingService;
+    private final InputValidationService inputValidationService;
 
     public AuthController(AppUserRepository users, JwtService jwt, PasswordService passwordService, 
                          RateLimitService rateLimitService, SessionService sessionService,
-                         SecurityLoggingService securityLoggingService) {
+                         SecurityLoggingService securityLoggingService, InputValidationService inputValidationService) {
         this.users = users;
         this.jwt = jwt;
         this.passwordService = passwordService;
         this.rateLimitService = rateLimitService;
         this.sessionService = sessionService;
         this.securityLoggingService = securityLoggingService;
+        this.inputValidationService = inputValidationService;
     }
 
     public static class LoginReq {
@@ -265,13 +268,11 @@ public class AuthController {
         System.out.println("INFO: New user registered: " + savedUser.getUsername() + 
                          " from IP: " + request.getRemoteAddr());
         
-        // Convert to DTO to prevent password exposure
+        // SECURITY FIX: Convert to secure DTO without sensitive fields
         UserDTO userDTO = UserDTO.builder()
                 .id(savedUser.getId())
                 .username(savedUser.getUsername())
                 .email(savedUser.getEmail())
-                .role(savedUser.getRole())
-                .isAdmin(savedUser.isAdmin())
                 .build();
         
         return ResponseEntity.status(201).body(userDTO);

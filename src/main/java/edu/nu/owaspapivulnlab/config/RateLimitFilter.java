@@ -6,6 +6,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimitService rateLimitService;
     private final ObjectMapper objectMapper;
+    
+    @Value("${app.rate-limit.enabled:true}")
+    private boolean rateLimitEnabled;
 
     public RateLimitFilter(RateLimitService rateLimitService) {
         this.rateLimitService = rateLimitService;
@@ -33,6 +37,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, 
                                   FilterChain filterChain) throws ServletException, IOException {
+        
+        // Skip rate limiting if disabled (for tests)
+        if (!rateLimitEnabled) {
+            filterChain.doFilter(request, response);
+            return;
+        }
         
         String path = request.getRequestURI();
         String method = request.getMethod();

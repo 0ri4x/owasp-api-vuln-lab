@@ -1,6 +1,7 @@
 package edu.nu.owaspapivulnlab.web;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -214,6 +215,9 @@ public class AccountController {
         a.setBalance(a.getBalance() - amount);
         accounts.save(a);
         
+        // SECURITY FIX: Generate secure transaction ID
+        String transactionId = java.util.UUID.randomUUID().toString();
+        
         // SECURITY FIX: Log financial transaction using security logging service
         securityLoggingService.logFinancialTransaction(
             transferRequest.getTransferType(),
@@ -226,9 +230,6 @@ public class AccountController {
             true,
             transactionId
         );
-        
-        // SECURITY FIX: Generate secure transaction ID
-        String transactionId = java.util.UUID.randomUUID().toString();
         
         Map<String, Object> response = new HashMap<>();
         response.put("status", "success");

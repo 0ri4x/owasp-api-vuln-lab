@@ -199,7 +199,7 @@ public class GlobalSecurityExceptionHandler {
                 .message("Input validation failed. Please check your request data.")
                 .timestamp(Instant.now())
                 .path(request.getRequestURI())
-                .details(isDevMode() ? fieldErrors : null) // SECURITY FIX: Only show details in dev
+                .details(isDevMode() ? new HashMap<String, Object>(fieldErrors) : null) // SECURITY FIX: Only show details in dev
                 .build();
         
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);

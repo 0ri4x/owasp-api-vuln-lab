@@ -175,7 +175,7 @@ public class UserController {
             securityLoggingService.logSecurityViolation(
                 "INVALID_SEARCH_QUERY",
                 auth.getName(),
-                getClientIpAddress(httpRequest),
+                getClientIpAddress(request),
                 "Invalid search query: " + q,
                 "MEDIUM"
             );
