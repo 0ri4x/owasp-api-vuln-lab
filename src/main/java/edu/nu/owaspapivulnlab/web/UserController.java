@@ -10,9 +10,12 @@ import edu.nu.owaspapivulnlab.model.AppUser;
 import edu.nu.owaspapivulnlab.repo.AppUserRepository;
 import edu.nu.owaspapivulnlab.service.UserService;
 import edu.nu.owaspapivulnlab.service.RateLimitService;
+import edu.nu.owaspapivulnlab.service.InputValidationService;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 import edu.nu.owaspapivulnlab.web.dto.PublicUserDTO;
 import edu.nu.owaspapivulnlab.web.dto.AdminUserDTO;
+import edu.nu.owaspapivulnlab.web.dto.CreateUserRequest;
+import edu.nu.owaspapivulnlab.web.dto.AdminRoleUpdateRequest;
 
 import java.util.HashMap;
 import java.util.List;
@@ -25,11 +28,13 @@ public class UserController {
     private final AppUserRepository users;
     private final UserService userService;
     private final RateLimitService rateLimitService;
+    private final InputValidationService inputValidationService;
 
-    public UserController(AppUserRepository users, UserService userService, RateLimitService rateLimitService) {
+    public UserController(AppUserRepository users, UserService userService, RateLimitService rateLimitService, InputValidationService inputValidationService) {
         this.users = users;
         this.userService = userService;
         this.rateLimitService = rateLimitService;
+        this.inputValidationService = inputValidationService;
     }
 
     // SECURE: Require authentication and ownership validation with role-based data filtering
@@ -51,20 +56,79 @@ public class UserController {
         }
     }
 
-    // SECURE: Prevent mass assignment by using explicit DTO and setting defaults
+    // SECURITY FIX: Mass assignment protection using secure DTO
     @PostMapping
-    public UserDTO create(@Valid @RequestBody UserDTO body) {
-        // SECURE: Prevent mass assignment - only allow setting safe fields
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> create(@Valid @RequestBody CreateUserRequest request, Authentication auth, HttpServletRequest httpRequest) {
+        // SECURITY FIX: Rate limiting for user creation
+        if (!rateLimitService.isAdminAllowed(httpRequest)) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Rate limit exceeded");
+            error.put("message", "Too many user creation requests. Please try again later.");
+            
+            System.err.println("SECURITY ALERT: Rate limit exceeded for user creation from IP: " + 
+                             httpRequest.getRemoteAddr() + " by admin: " + auth.getName() + 
+                             " at " + java.time.Instant.now());
+            
+            return ResponseEntity.status(429).body(error);
+        }
+        
+        // SECURITY FIX: Enhanced input validation using InputValidationService
+        if (!inputValidationService.isValidUsername(request.getUsername())) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid username format. Username must be 3-50 characters and contain only letters, numbers, underscore, or dash.");
+            
+            System.err.println("SECURITY ALERT: Invalid username format attempt from IP: " + 
+                             httpRequest.getRemoteAddr() + " username: " + request.getUsername() + 
+                             " by admin: " + auth.getName());
+            
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        if (!inputValidationService.isValidEmail(request.getEmail())) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid email format");
+            
+            System.err.println("SECURITY ALERT: Invalid email format attempt from IP: " + 
+                             httpRequest.getRemoteAddr() + " email: " + request.getEmail() + 
+                             " by admin: " + auth.getName());
+            
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Sanitize inputs to prevent injection attacks
+        String sanitizedUsername = inputValidationService.sanitizeString(request.getUsername()).toLowerCase();
+        String sanitizedEmail = inputValidationService.sanitizeString(request.getEmail()).toLowerCase();
+        
+        // SECURITY FIX: Check for existing users
+        if (users.findByUsername(sanitizedUsername).isPresent()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Username already exists");
+            return ResponseEntity.status(409).body(error);
+        }
+        
+        if (users.findByEmail(sanitizedEmail).isPresent()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Email already exists");
+            return ResponseEntity.status(409).body(error);
+        }
+        
+        // SECURITY FIX: Create user with secure defaults - no mass assignment possible
         AppUser newUser = AppUser.builder()
-                .username(body.getUsername())
-                .email(body.getEmail())
-                .role("USER") // Default role - prevent privilege escalation
-                .isAdmin(false) // Default to non-admin - prevent privilege escalation
-                .password("") // Password must be set through auth/signup endpoint
+                .username(sanitizedUsername)
+                .email(sanitizedEmail)
+                .role("USER") // SECURITY: Always default to USER role
+                .isAdmin(false) // SECURITY: Always default to non-admin
+                .password("") // SECURITY: Password must be set through auth/signup endpoint
                 .build();
         
         AppUser savedUser = users.save(newUser);
-        return convertToDTO(savedUser);
+        
+        // SECURITY FIX: Log admin user creation for audit
+        System.out.println("INFO: User created by admin - Username: " + savedUser.getUsername() + 
+                         " by admin: " + auth.getName() + " from IP: " + httpRequest.getRemoteAddr());
+        
+        return ResponseEntity.status(201).body(convertToDTO(savedUser));
     }
 
     // SECURITY FIX: Enhanced user search with data access rate limiting
@@ -124,6 +188,71 @@ public class UserController {
         return users.findAll().stream()
                 .map(this::convertToAdminDTO)
                 .collect(Collectors.toList());
+    }
+
+    // SECURITY FIX: Admin-only role and privilege management endpoint
+    @PutMapping("/{id}/role")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> updateUserRole(@PathVariable Long id, @Valid @RequestBody AdminRoleUpdateRequest request, 
+                                          Authentication auth, HttpServletRequest httpRequest) {
+        // SECURITY FIX: Rate limiting for role updates
+        if (!rateLimitService.isAdminAllowed(httpRequest)) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Rate limit exceeded");
+            error.put("message", "Too many role update requests. Please try again later.");
+            
+            System.err.println("SECURITY ALERT: Rate limit exceeded for role update from IP: " + 
+                             httpRequest.getRemoteAddr() + " by admin: " + auth.getName() + 
+                             " at " + java.time.Instant.now());
+            
+            return ResponseEntity.status(429).body(error);
+        }
+        
+        // SECURITY FIX: Validate role input using InputValidationService
+        if (!inputValidationService.isValidRole(request.getRole())) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Invalid role. Must be USER, ADMIN, or MODERATOR");
+            
+            System.err.println("SECURITY ALERT: Invalid role assignment attempt from IP: " + 
+                             httpRequest.getRemoteAddr() + " role: " + request.getRole() + 
+                             " by admin: " + auth.getName());
+            
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Validate that the target user exists
+        AppUser targetUser = users.findById(id).orElse(null);
+        if (targetUser == null) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "User not found");
+            return ResponseEntity.status(404).body(error);
+        }
+        
+        // SECURITY FIX: Prevent self-demotion (admin removing their own admin privileges)
+        Long currentUserId = userService.getUserIdByUsername(auth.getName());
+        if (currentUserId != null && currentUserId.equals(id) && !request.getIsAdmin()) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Cannot remove admin privileges from yourself");
+            return ResponseEntity.status(400).body(error);
+        }
+        
+        // SECURITY FIX: Update role and admin status with validation
+        String previousRole = targetUser.getRole();
+        boolean previousAdminStatus = targetUser.isAdmin();
+        
+        targetUser.setRole(request.getRole());
+        targetUser.setAdmin(request.getIsAdmin());
+        
+        AppUser updatedUser = users.save(targetUser);
+        
+        // SECURITY FIX: Log all role changes for audit trail
+        System.out.println("CRITICAL AUDIT: Role updated - User: " + updatedUser.getUsername() + 
+                         " Previous Role: " + previousRole + " New Role: " + updatedUser.getRole() + 
+                         " Previous Admin: " + previousAdminStatus + " New Admin: " + updatedUser.isAdmin() + 
+                         " Updated by: " + auth.getName() + " IP: " + httpRequest.getRemoteAddr() + 
+                         " Time: " + java.time.Instant.now());
+        
+        return ResponseEntity.ok(convertToAdminDTO(updatedUser));
     }
 
     // SECURE: Require admin role for user deletion
@@ -198,15 +327,14 @@ public class UserController {
     }
     
     /**
-     * Convert AppUser to UserDTO to prevent password exposure (legacy method for compatibility)
+     * SECURITY FIX: Convert AppUser to secure UserDTO (excludes sensitive fields)
      */
     private UserDTO convertToDTO(AppUser user) {
         return UserDTO.builder()
                 .id(user.getId())
                 .username(user.getUsername())
                 .email(user.getEmail())
-                .role(user.getRole())
-                .isAdmin(user.isAdmin())
+                // SECURITY FIX: Removed role and isAdmin fields to prevent exposure
                 .build();
     }
 }

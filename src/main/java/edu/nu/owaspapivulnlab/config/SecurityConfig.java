@@ -28,9 +28,11 @@ public class SecurityConfig {
     private String secret;
     
     private final RateLimitFilter rateLimitFilter;
+    private final MassAssignmentProtectionFilter massAssignmentProtectionFilter;
 
-    public SecurityConfig(RateLimitFilter rateLimitFilter) {
+    public SecurityConfig(RateLimitFilter rateLimitFilter, MassAssignmentProtectionFilter massAssignmentProtectionFilter) {
         this.rateLimitFilter = rateLimitFilter;
+        this.massAssignmentProtectionFilter = massAssignmentProtectionFilter;
     }
 
     // SECURITY FIX: Enhanced SecurityFilterChain with rate limiting protection
@@ -51,8 +53,9 @@ public class SecurityConfig {
 
         http.headers(h -> h.frameOptions(f -> f.disable())); // allow H2 console
 
-        // SECURITY FIX: Add rate limiting filter before JWT filter for maximum protection
+        // SECURITY FIX: Add security filters in proper order for maximum protection
         http.addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(massAssignmentProtectionFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         http.addFilterBefore(new JwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

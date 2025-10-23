@@ -5,6 +5,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
+/**
+ * SECURITY FIX: Secure UserDTO with sensitive fields removed
+ * This DTO is now safe for general user operations and responses
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -19,9 +23,16 @@ public class UserDTO {
     @Email(message = "Email must be valid")
     private String email;
     
-    private String role;
-    private boolean isAdmin;
+    // SECURITY FIX: Removed sensitive fields to prevent mass assignment
+    // - role: Moved to AdminUserDTO for admin-only access
+    // - isAdmin: Moved to AdminUserDTO for admin-only access
     
     // Note: Password field is intentionally excluded to prevent exposure
     // Password handling is done separately in AuthController
+    
+    /**
+     * SECURITY NOTE: Sensitive fields have been moved to:
+     * - AdminUserDTO: For administrative operations (includes role, isAdmin)
+     * - PublicUserDTO: For public user information (excludes sensitive data)
+     */
 }
