@@ -19,6 +19,7 @@ import io.jsonwebtoken.*;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Map;
 
 @Configuration
 @EnableMethodSecurity(prePostEnabled = true)
@@ -29,10 +30,15 @@ public class SecurityConfig {
     
     private final RateLimitFilter rateLimitFilter;
     private final MassAssignmentProtectionFilter massAssignmentProtectionFilter;
+    private final JwtService jwtService;
+    private final SessionService sessionService;
 
-    public SecurityConfig(RateLimitFilter rateLimitFilter, MassAssignmentProtectionFilter massAssignmentProtectionFilter) {
+    public SecurityConfig(RateLimitFilter rateLimitFilter, MassAssignmentProtectionFilter massAssignmentProtectionFilter,
+                         JwtService jwtService, SessionService sessionService) {
         this.rateLimitFilter = rateLimitFilter;
         this.massAssignmentProtectionFilter = massAssignmentProtectionFilter;
+        this.jwtService = jwtService;
+        this.sessionService = sessionService;
     }
 
     // SECURITY FIX: Enhanced SecurityFilterChain with rate limiting protection
@@ -56,14 +62,21 @@ public class SecurityConfig {
         // SECURITY FIX: Add security filters in proper order for maximum protection
         http.addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         http.addFilterBefore(massAssignmentProtectionFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
-        http.addFilterBefore(new JwtFilter(secret), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(new JwtFilter(secret, jwtService, sessionService), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
-    // SECURE: Improved JWT filter with proper error handling
+    // SECURITY FIX: Hardened JWT filter with comprehensive validation
     static class JwtFilter extends OncePerRequestFilter {
         private final String secret;
-        JwtFilter(String secret) { this.secret = secret; }
+        private final JwtService jwtService;
+        private final SessionService sessionService;
+        
+        JwtFilter(String secret, JwtService jwtService, SessionService sessionService) { 
+            this.secret = secret; 
+            this.jwtService = jwtService;
+            this.sessionService = sessionService;
+        }
 
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -72,21 +85,79 @@ public class SecurityConfig {
             if (auth != null && auth.startsWith("Bearer ")) {
                 String token = auth.substring(7);
                 try {
-                    Claims c = Jwts.parserBuilder().setSigningKey(secret.getBytes()).build()
-                            .parseClaimsJws(token).getBody();
-                    String user = c.getSubject();
-                    String role = (String) c.get("role");
-                    UsernamePasswordAuthenticationToken authn = new UsernamePasswordAuthenticationToken(user, null,
-                            role != null ? Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)) : Collections.emptyList());
+                    // SECURITY FIX: Use enhanced JWT validation
+                    Claims claims = jwtService.validateToken(token);
+                    
+                    // SECURITY FIX: Validate session binding
+                    String sessionId = (String) claims.get("sessionId");
+                    String clientIp = getClientIpAddress(request);
+                    String userAgent = request.getHeader("User-Agent");
+                    
+                    if (sessionId != null && !sessionService.validateSession(sessionId, clientIp, userAgent)) {
+                        // SECURITY FIX: Log session validation failure
+                        System.err.println("SECURITY ALERT: Session validation failed for token - " +
+                                         "SessionID: " + sessionId + " IP: " + clientIp + 
+                                         " Time: " + java.time.Instant.now());
+                        SecurityContextHolder.clearContext();
+                        chain.doFilter(request, response);
+                        return;
+                    }
+                    
+                    // SECURITY FIX: Validate token type (must be access token)
+                    if (!jwtService.isTokenType(token, "access")) {
+                        System.err.println("SECURITY ALERT: Invalid token type used for authentication");
+                        SecurityContextHolder.clearContext();
+                        chain.doFilter(request, response);
+                        return;
+                    }
+                    
+                    String user = claims.getSubject();
+                    String role = (String) claims.get("role");
+                    
+                    // SECURITY FIX: Enhanced authentication with additional claims
+                    UsernamePasswordAuthenticationToken authn = new UsernamePasswordAuthenticationToken(
+                        user, 
+                        null,
+                        role != null ? Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)) : Collections.emptyList()
+                    );
+                    
+                    // SECURITY FIX: Add additional authentication details
+                    authn.setDetails(Map.of(
+                        "sessionId", sessionId,
+                        "jwtId", claims.getId(),
+                        "issuedAt", claims.getIssuedAt(),
+                        "expiresAt", claims.getExpiration()
+                    ));
+                    
                     SecurityContextHolder.getContext().setAuthentication(authn);
+                    
                 } catch (JwtException e) {
-                    // SECURE: Properly handle JWT errors - clear context and continue
+                    // SECURITY FIX: Enhanced error handling with detailed logging
                     SecurityContextHolder.clearContext();
-                    // Log the error for monitoring (in production, use proper logging)
-                    System.err.println("JWT validation failed: " + e.getMessage());
+                    System.err.println("SECURITY ALERT: JWT validation failed - " + 
+                                     "IP: " + getClientIpAddress(request) + 
+                                     " Error: " + e.getMessage() + 
+                                     " Time: " + java.time.Instant.now());
                 }
             }
             chain.doFilter(request, response);
+        }
+        
+        /**
+         * SECURITY FIX: Extract real client IP address considering proxies
+         */
+        private String getClientIpAddress(HttpServletRequest request) {
+            String xForwardedFor = request.getHeader("X-Forwarded-For");
+            if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+                return xForwardedFor.split(",")[0].trim();
+            }
+            
+            String xRealIp = request.getHeader("X-Real-IP");
+            if (xRealIp != null && !xRealIp.isEmpty()) {
+                return xRealIp;
+            }
+            
+            return request.getRemoteAddr();
         }
     }
 }
