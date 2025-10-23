@@ -11,6 +11,7 @@ import edu.nu.owaspapivulnlab.service.JwtService;
 import edu.nu.owaspapivulnlab.service.PasswordService;
 import edu.nu.owaspapivulnlab.service.RateLimitService;
 import edu.nu.owaspapivulnlab.service.SessionService;
+import edu.nu.owaspapivulnlab.service.SecurityLoggingService;
 import edu.nu.owaspapivulnlab.web.dto.SignupRequest;
 import edu.nu.owaspapivulnlab.web.dto.UserDTO;
 
@@ -25,14 +26,17 @@ public class AuthController {
     private final PasswordService passwordService;
     private final RateLimitService rateLimitService;
     private final SessionService sessionService;
+    private final SecurityLoggingService securityLoggingService;
 
     public AuthController(AppUserRepository users, JwtService jwt, PasswordService passwordService, 
-                         RateLimitService rateLimitService, SessionService sessionService) {
+                         RateLimitService rateLimitService, SessionService sessionService,
+                         SecurityLoggingService securityLoggingService) {
         this.users = users;
         this.jwt = jwt;
         this.passwordService = passwordService;
         this.rateLimitService = rateLimitService;
         this.sessionService = sessionService;
+        this.securityLoggingService = securityLoggingService;
     }
 
     public static class LoginReq {
@@ -127,16 +131,28 @@ public class AuthController {
             String accessToken = jwt.issueAccessToken(user.getUsername(), claims, sessionId);
             String refreshToken = jwt.issueRefreshToken(user.getUsername(), sessionId);
             
-            // SECURITY FIX: Log successful authentication for monitoring
-            System.out.println("INFO: Successful login for user: " + user.getUsername() + 
-                             " from IP: " + clientIp + " SessionID: " + sessionId);
+            // SECURITY FIX: Log successful authentication using security logging service
+            securityLoggingService.logAuthenticationEvent(
+                "LOGIN",
+                user.getUsername(),
+                clientIp,
+                userAgent,
+                true,
+                "SessionID: " + sessionId + " | Role: " + user.getRole()
+            );
             
             return ResponseEntity.ok(new TokenRes(accessToken, refreshToken, "Bearer", 900)); // 15 minutes
         }
         
-        // SECURITY FIX: Log failed authentication attempts for monitoring
-        System.err.println("SECURITY ALERT: Failed login attempt for username: " + req.username() + 
-                         " from IP: " + request.getRemoteAddr() + " at " + java.time.Instant.now());
+        // SECURITY FIX: Log failed authentication using security logging service
+        securityLoggingService.logAuthenticationEvent(
+            "LOGIN",
+            req.username(),
+            getClientIpAddress(request),
+            request.getHeader("User-Agent"),
+            false,
+            "Invalid credentials provided"
+        );
         
         Map<String, String> error = new HashMap<>();
         error.put("error", "Invalid credentials");
